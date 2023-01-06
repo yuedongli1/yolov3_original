@@ -70,10 +70,11 @@ class ComputeLoss(nn.Cell):
         loss_conf = 0.0
         loss_cls = 0.0
 
-        tcls, tx, ty, tw, th, tmasks, noobj_masks, indices = self.build_targets(p, targets)
-        tcls, tx, ty, tw, th, tmasks, noobj_masks, indices = ops.stop_gradient(tcls), ops.stop_gradient(tx), \
+        tcls, tx, ty, tw, th, tmasks, noobj_masks, indices, anchors = self.build_targets(p, targets)
+        tcls, tx, ty, tw, th, tmasks, noobj_masks, indices, anchors = ops.stop_gradient(tcls), ops.stop_gradient(tx), \
                                                ops.stop_gradient(ty), ops.stop_gradient(tw), ops.stop_gradient(th), \
-                                               ops.stop_gradient(tmasks), ops.stop_gradient(noobj_masks), ops.stop_gradient(indices)
+                                               ops.stop_gradient(tmasks), ops.stop_gradient(noobj_masks), ops.stop_gradient(indices), \
+                                               ops.stop_gradient(anchors)
 
         # Losses
         for layer_index, pi in enumerate(p):  # layer index, layer predictions
@@ -90,8 +91,9 @@ class ComputeLoss(nn.Cell):
             # Get outputs
             px = ops.Sigmoid()(_meta_pred[..., 0])  # Center x
             py = ops.Sigmoid()(_meta_pred[..., 1])  # Center y
-            pw = _meta_pred[..., 2]  # Width
-            ph = _meta_pred[..., 3]  # Height
+            pwh = ops.Exp()(_meta_pred[..., 2:4]) * anchors[layer_index]
+            pw = pwh[:, 0]  # Width
+            ph = pwh[:, 1]  # Height
             pconf = ops.Sigmoid()(_meta_pred[..., 4])  # Conf
             pcls = ops.Sigmoid()(_meta_pred[..., 5:])  # Cls pred.
 
@@ -122,7 +124,7 @@ class ComputeLoss(nn.Cell):
         targets = targets.view(-1, 6)
         mask_t = targets[:, 1] >= 0
         na, nt = self.na, targets.shape[0]  # number of anchors, targets
-        tmasks, indices, noobj_masks, tx, ty, tw, th, tcls = (), (), (), (), (), (), (), ()
+        tmasks, indices, noobj_masks, tx, ty, tw, th, tcls, anch = (), (), (), (), (), (), (), (), ()
         gain = ops.ones(7, ms.int32) # normalized to gridspace gain
         ai = ops.tile(mnp.arange(na).view(-1, 1), (1, nt)) # shape: (na, nt)
         ai = ops.cast(ai, targets.dtype)
@@ -165,6 +167,7 @@ class ComputeLoss(nn.Cell):
             tmasks += (mask_m_t,)
             noobj_masks += (mask_n,)
             indices += (ops.stack((b, a, gj, gi), 0),)  # image, anchor, grid
+            anch += (anchors[a],)  # anchors
 
             tx += (gxy[:, 0] - gi,)
             ty += (gxy[:, 1] - gj,)
@@ -179,7 +182,8 @@ class ComputeLoss(nn.Cell):
                ops.stack(th), \
                ops.stack(tmasks), \
                ops.stack(noobj_masks), \
-               ops.stack(indices)
+               ops.stack(indices), \
+               ops.stack(anch)
 
 
 if __name__ == '__main__':
