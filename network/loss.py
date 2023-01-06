@@ -44,74 +44,6 @@ def bbox_iou(box1, box2, xywh=True, eps=1e-7):
     return iou  # IoU
 
 
-
-def smooth_BCE(eps=0.1):  # https://github.com/ultralytics/yolov3/issues/238#issuecomment-598028441
-    # return positive, negative label smoothing BCE targets
-    return 1.0 - 0.5 * eps, 0.5 * eps
-
-
-class FocalLoss(nn.Cell):
-    # Wraps focal loss around existing loss_fcn(), i.e. criteria = FocalLoss(nn.BCEWithLogitsLoss(), gamma=1.5)
-    def __init__(self, bce_weight=None, bce_pos_weight=None, gamma=1.5, alpha=0.25):
-        super(FocalLoss, self).__init__()
-        self.loss_fcn = nn.BCEWithLogitsLoss(weight=bce_weight, pos_weight=bce_pos_weight, reduction="none")
-        self.gamma = gamma
-        self.alpha = alpha
-        self.reduction = "mean" # default mean
-        assert self.loss_fcn.reduction == 'none'  # required to apply FL to each element
-
-    def construct(self, pred, true, mask=None):
-        ori_dtype = pred.dtype
-        loss = self.loss_fcn(pred.astype(ms.float32), true.astype(ms.float32))
-        # p_t = torch.exp(-loss)
-        # loss *= self.alpha * (1.000001 - p_t) ** self.gamma  # non-zero power for gradient stability
-
-        # TF implementation https://github.com/tensorflow/addons/blob/v0.7.1/tensorflow_addons/losses/focal_loss.py
-
-        pred_prob = ops.Sigmoid()(pred) # prob from logits
-        p_t = true * pred_prob + (1 - true) * (1 - pred_prob)
-        alpha_factor = true * self.alpha + (1 - true) * (1 - self.alpha)
-        modulating_factor = (1.0 - p_t) ** self.gamma
-        loss *= alpha_factor * modulating_factor
-
-        if mask is not None:
-            loss *= mask
-
-        if self.reduction == 'mean':
-            if mask is not None:
-                return (loss.sum() / mask.sum().clip(1, None)).astype(ori_dtype)
-            return loss.mean().astype(ori_dtype)
-        elif self.reduction == 'sum':
-            return loss.sum().astype(ori_dtype)
-        else:  # 'none'
-            return loss.astype(ori_dtype)
-
-
-class BCEWithLogitsLoss(nn.Cell):
-    # Wraps focal loss around existing loss_fcn(), i.e. criteria = FocalLoss(nn.BCEWithLogitsLoss(), gamma=1.5)
-    def __init__(self, bce_weight=None, bce_pos_weight=None):
-        super(BCEWithLogitsLoss, self).__init__()
-        self.loss_fcn = nn.BCEWithLogitsLoss(weight=bce_weight, pos_weight=bce_pos_weight, reduction="none")
-        self.reduction = "mean" # default mean
-        assert self.loss_fcn.reduction == 'none'  # required to apply FL to each element
-
-    def construct(self, pred, true, mask=None):
-        ori_dtype = pred.dtype
-        loss = self.loss_fcn(pred.astype(ms.float32), true.astype(ms.float32))
-
-        if mask is not None:
-            loss *= mask
-
-        if self.reduction == 'mean':
-            if mask is not None:
-                return (loss.sum() / mask.astype(loss.dtype).sum().clip(1, None)).astype(ori_dtype)
-            return loss.mean().astype(ori_dtype)
-        elif self.reduction == 'sum':
-            return loss.sum().astype(ori_dtype)
-        else:  # 'none'
-            return loss.astype(ori_dtype)
-
-
 class ComputeLoss(nn.Cell):
     # Compute losses
     def __init__(self, model):
@@ -173,7 +105,7 @@ class ComputeLoss(nn.Cell):
             b, a, gj, gi = b.view(-1), a.view(-1), gj.view(-1), gi.view(-1)
             pobj[b, a, gj, gi] = 0.
 
-            loss_conf += self.bce_loss(pconf * tmask, tmask * 1.0) + 0.5 * self.bce_loss(tobj, pobj)
+            loss_conf += self.bce_loss(pconf * tmask, tmask * 1.0) + 0.5 * self.bce_loss(pobj, tobj)
 
             t = ops.fill(pcls.dtype, pcls.shape, 0.)  # targets
             t[mnp.arange(n), tcls[layer_index]] = 1.
