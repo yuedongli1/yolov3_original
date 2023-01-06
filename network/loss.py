@@ -91,9 +91,8 @@ class ComputeLoss(nn.Cell):
             # Get outputs
             px = ops.Sigmoid()(_meta_pred[..., 0])  # Center x
             py = ops.Sigmoid()(_meta_pred[..., 1])  # Center y
-            pwh = ops.Exp()(_meta_pred[..., 2:4]) * anchors[layer_index]
-            pw = pwh[:, 0]  # Width
-            ph = pwh[:, 1]  # Height
+            pw = _meta_pred[..., 2]  # Width
+            ph = _meta_pred[..., 3]  # Height
             pconf = ops.Sigmoid()(_meta_pred[..., 4])  # Conf
             pcls = ops.Sigmoid()(_meta_pred[..., 5:])  # Cls pred.
 
@@ -168,6 +167,9 @@ class ComputeLoss(nn.Cell):
             noobj_masks += (mask_n,)
             indices += (ops.stack((b, a, gj, gi), 0),)  # image, anchor, grid
             anch += (anchors[a],)  # anchors
+
+            gwh *= mask_m_t[:, None]
+            gwh = ops.Log()(gwh / anchors[a] + 1e-16)
 
             tx += (gxy[:, 0] - gi,)
             ty += (gxy[:, 1] - gj,)
