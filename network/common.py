@@ -3,24 +3,11 @@ import numpy as np
 import mindspore as ms
 import mindspore.numpy as mnp
 from mindspore import nn, ops, Tensor
-from mindspore.common.initializer import HeUniform
-
-
-_SYNC_BN = False
 
 
 class Identity(nn.Cell):
     def construct(self, x):
         return x
-
-
-class ResizeNearestNeighbor(nn.Cell):
-    def __init__(self, scale=2):
-        super(ResizeNearestNeighbor, self).__init__()
-        self.scale = scale
-
-    def construct(self, x):
-        return ops.ResizeNearestNeighbor((x.shape[-2] * 2, x.shape[-1] * 2))(x)
 
 
 def _calculate_fan_in_and_fan_out(shape):
@@ -88,17 +75,12 @@ class Conv(nn.Cell):
                               padding=autopad(k, p),
                               group=g,
                               has_bias=False,
-                              # weight_init=HeUniform(negative_slope=5))
                               weight_init=_init_weights((c2, c1, k, k)))
         self.bn = nn.BatchNorm2d(c2, eps=1e-3, momentum=0.97)
         self.act = nn.SiLU() if act is True else (act if isinstance(act, nn.Cell) else Identity())
 
     def construct(self, x):
-        x = self.conv(x)
-        x = self.bn(x)
-        x = self.act(x)
-        return x
-        # return self.act(self.bn(self.conv(x)))
+        return self.act(self.bn(self.conv(x)))
 
 
 class Bottleneck(nn.Cell):
@@ -146,10 +128,9 @@ class Detect(nn.Cell):
             if not self.training:  # inference
                 grid_tensor = self._make_grid(nx, ny, out.dtype)
 
-                y = ops.Sigmoid()(out)
-                y[..., 0:2] = (y[..., 0:2] * 2. - 0.5 + grid_tensor) * self.stride[i]  # xy
-                y[..., 2:4] = (y[..., 2:4] * 2) ** 2 * self.anchor_grid[i]  # wh
-                z += (y.view(bs, -1, self.no),)
+                out[..., 0:2] = (ops.Sigmoid()(out[..., 0:2]) + grid_tensor) * self.stride[i]  # xy
+                out[..., 2:4] = ops.Exp()(out[..., 2:4]) * self.anchor_grid[i]  # wh
+                z += (out.view(bs, -1, self.no),)
 
         # return outs
         return outs if self.training else (ops.concat(z, 1), outs)
@@ -160,8 +141,7 @@ class Detect(nn.Cell):
         return ops.cast(ops.stack((xv, yv), 2).view((1, 1, ny, nx, 2)), dtype)
 
 
-def parse_model(d, ch, sync_bn=False):  # model_dict, input_channels(3)
-    _SYNC_BN = sync_bn
+def parse_model(d, ch):  # model_dict, input_channels(3)
     print('\n%3s%18s%3s%10s  %-40s%-30s' % ('', 'from', 'n', 'params', 'module', 'arguments'))
     anchors, nc, gd, gw = d['anchors'], d['nc'], d['depth_multiple'], d['width_multiple']
     na = (len(anchors[0]) // 2) if isinstance(anchors, list) else anchors  # number of anchors
