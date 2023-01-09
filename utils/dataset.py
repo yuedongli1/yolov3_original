@@ -3,6 +3,7 @@ import logging
 import os
 import random
 import hashlib
+import math
 import multiprocessing
 import numpy as np
 from itertools import repeat
@@ -15,8 +16,8 @@ import mindspore.dataset as de
 from mindspore.dataset import vision
 from mindspore.dataset.vision import Inter
 
-from utils.general import segments2boxes, xywhn2xyxy, xyxy2xywh
-from utils.augumentations import load_image, load_mosaic, letterbox, random_perspective, \
+from .general import segments2boxes, xywhn2xyxy, xyxy2xywh
+from .augumentations import load_image, load_mosaic, letterbox, random_perspective, \
     augment_hsv
 
 # Parameters
@@ -338,7 +339,7 @@ class LoadImagesAndLabels:  # for training/testing
         ho = np.array([[0., 0, 0, 1, 0, 0]])
         wo = np.array([[0., 0, 1, 0, 0, 0]])
         s = np.array([[1, 1, .5, .5, .5, .5]])  # scale
-        for i in range(n):  # zidane torch.zeros(16,3,720,1280)  # BCHW
+        for i in range(n):   # BCHW
             i *= 4
             if random.random() < 0.5:
 
@@ -363,7 +364,7 @@ class LoadImagesAndLabels:  # for training/testing
 
 def create_dataloader(path, imgsz, batch_size, stride, opt, epoch_size=300, hyp=None, augment=False,
                       cache=False, pad=0.0, rect=False, rank=0, rank_size=1, num_parallel_workers=8,
-                      image_weights=False, quad=False, max_box_per_img=160, prefix=''):
+                      shuffle=True, drop_remainder=True, image_weights=False, quad=False, max_box_per_img=160, prefix=''):
     # Make sure only the first process in DDP process the dataset first, and the following others can use the cache
     dataset = LoadImagesAndLabels(path, imgsz, batch_size,
                                   augment=augment,  # augment images
@@ -382,85 +383,20 @@ def create_dataloader(path, imgsz, batch_size, stride, opt, epoch_size=300, hyp=
     dataset_column_names = ["img", "label_out", "img_files", "shapes"]
     if rank_size > 1:
         ds = de.GeneratorDataset(dataset, column_names=dataset_column_names,
-                                 num_parallel_workers=min(8, num_parallel_workers), shuffle=True,
+                                 num_parallel_workers=min(8, num_parallel_workers), shuffle=shuffle,
                                  num_shards=rank_size, shard_id=rank)
     else:
         ds = de.GeneratorDataset(dataset, column_names=dataset_column_names,
-                                 num_parallel_workers=min(32, num_parallel_workers), shuffle=True)
+                                 num_parallel_workers=min(32, num_parallel_workers), shuffle=shuffle)
     ds = ds.batch(batch_size,
                   per_batch_map=LoadImagesAndLabels.collate_fn4 if quad else LoadImagesAndLabels.collate_fn,
                   input_columns=dataset_column_names,
-                  drop_remainder=True)
+                  drop_remainder=drop_remainder)
     ds = ds.repeat(epoch_size)
 
-    per_epoch_size = int(len(dataset) / batch_size / rank_size)
+    per_epoch_size = int(len(dataset) / batch_size / rank_size) if drop_remainder else \
+        math.ceil(len(dataset) / batch_size / rank_size)
 
     return ds, dataset, per_epoch_size
-
-
-if __name__ == '__main__':
-    # python train.py --workers 8 --device 0 --batch-size 32 --data data/coco.yaml
-    #   --img 640 640 --cfg cfg/training/yolov7.yaml --weights '' --name yolov7 --hyp data/hyp.scratch.p5.yaml
-    import yaml
-    from config.args import get_args_train
-    from utils.general import check_file, increment_path, colorstr
-    import network.yolo as yolo
-    from mindspore import context
-    import mindspore as ms
-    from mindspore import Tensor
-
-    context.set_context(mode=context.GRAPH_MODE, pynative_synchronize=True)
-    context.set_context(mode=context.PYNATIVE_MODE, pynative_synchronize=True)
-    cfg = "D:/yolov3_mindspore/config/network/yolov3.yaml"
-    model = yolo.Model(cfg, ch=3, nc=80, anchors=None)
-    for p in model.trainable_params():
-        print(p.name)
-    model.set_train(True)
-
-
-
-    opt = get_args_train()
-    # opt.hyp = opt.hyp or ('hyp.finetune.yaml' if opt.weights else 'hyp.scratch.yaml')
-    opt.data, opt.cfg, opt.hyp = check_file('../config/data/coco.yaml'), check_file('../config/network/yolov3.yaml'), check_file('../config/data/hyp.scratch.yaml')  # check files
-    assert len(opt.cfg) or len(opt.weights), 'either --cfg or --weights must be specified'
-    opt.img_size.extend([opt.img_size[-1]] * (2 - len(opt.img_size)))  # extend to 2 sizes (train, test)
-    opt.name = 'evolve' if opt.evolve else opt.name
-    opt.save_dir = increment_path(Path(opt.project) / opt.name, exist_ok=opt.exist_ok | opt.evolve)  # increment run
-    opt.total_batch_size = opt.batch_size
-
-    # Hyperparameters
-    with open(opt.hyp) as f:
-        hyp = yaml.load(f, Loader=yaml.SafeLoader)  # load hyps
-
-    # Train set
-    train_path = "D:/yolov3-master/data/scripts/coco/train2017.txt"
-    # train_path = "D:/yolov3_fromv7/datasets/coco128"
-    imgsz, _ = [640, 640]
-    batch_size = 2
-    gs = 32
-    ds, _, ds_size = create_dataloader(train_path, imgsz, batch_size, gs, opt, epoch_size=1,
-                                       hyp=hyp, augment=True, cache=opt.cache_images, rect=opt.rect,
-                                       rank=0, rank_size=1,
-                                       num_parallel_workers=8, image_weights=opt.image_weights,
-                                       quad=opt.quad, prefix=colorstr('train: '))
-    data_loader = ds.create_dict_iterator(output_numpy=True, num_epochs=1)
-    max_shape = 0
-    for i, data in enumerate(data_loader):
-        imgs, label_outs, img_files = data["img"], data["label_out"], data["img_files"]
-        print(f"{i}/{ds_size} label_outs: {label_outs.shape}")
-        if label_outs.shape[1] > max_shape:
-            max_shape = label_outs.shape[1]
-            print(f"max shape: {max_shape}")
-        imgs = Tensor(imgs, ms.float32)
-        pred = model(imgs)
-        print('hello')
-
-        # if i == 0:
-        #     print("imgs: ", imgs.shape)
-        #     print("label_outs: ", label_outs.shape)
-        #     print("img_files", img_files.shape)
-        # break
-    print(f"max shape: {max_shape}") # 158
-    print("Done!")
 
 
