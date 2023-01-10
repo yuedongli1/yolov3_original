@@ -1,7 +1,5 @@
 import math
 import numpy as np
-from mindspore import Tensor
-import mindspore as ms
 
 
 def one_cycle(y1=0.0, y2=1.0, steps=100):
@@ -24,7 +22,6 @@ def get_group_param_yolov3(model):
 
 def get_lr_yolov3(opt, hyp, per_epoch_size):
     # Scheduler https://arxiv.org/pdf/1812.01187.pdf
-    # https://pytorch.org/docs/stable/_modules/torch/optim/lr_scheduler.html#OneCycleLR
     init_lr, warmup_bias_lr, warmup_epoch, lrf = \
         hyp['lr0'], hyp['warmup_bias_lr'], hyp['warmup_epochs'], hyp['lrf']
     total_epoch, linear_lr = opt.epochs, opt.linear_lr
@@ -43,8 +40,6 @@ def get_lr_yolov3(opt, hyp, per_epoch_size):
     lr_pg0, lr_pg1, lr_pg2 = [], [], []
     momentum_pg = []
     warmup_steps = max(round(warmup_epoch * per_epoch_size), 1000)
-    warmup_bias_steps_first = min(max(round(3 * per_epoch_size), 1000), warmup_steps)
-    warmup_bias_lr_first = np.interp(warmup_bias_steps_first, [0, warmup_steps], [0.0, init_lr])
     xi = [0, warmup_steps]
     for i in range(total_epoch * per_epoch_size):
         cur_epoch = i // per_epoch_size

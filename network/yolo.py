@@ -78,17 +78,12 @@ class Model(nn.Cell):
         # Build strides, anchors
         m = self.model[-1]  # Detect()
         if isinstance(m, Detect):
-            s = 256  # 2x min stride
-            # m.stride = torch.tensor([s / x.shape[-2] for x in self.forward(torch.zeros(1, ch, s, s))])  # forward
             m.stride = Tensor(np.array(self.yaml['stride']), ms.int32)
             check_anchor_order(m)
             m.anchors /= m.stride.view(-1, 1, 1)
             self.stride = m.stride
-            self._initialize_biases()  # only run once
             # print('Strides: %s' % m.stride.tolist())
 
-        # Init weights, biases
-        # initialize_weights(self)
 
     def construct(self, x, augment=False):
         if augment:
@@ -139,7 +134,6 @@ class Model(nn.Cell):
 
     def _initialize_biases(self, cf=None):  # initialize biases into Detect(), cf is class frequency
         # https://arxiv.org/abs/1708.02002 section 3.3
-        # cf = torch.bincount(torch.tensor(np.concatenate(dataset.labels, 0)[:, 0]).long(), minlength=nc) + 1.
         m = self.model[-1]  # Detect() module
         for mi, s in zip(m.m, m.stride):  # from
             s = s.asnumpy()

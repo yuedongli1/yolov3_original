@@ -1,5 +1,6 @@
 import mindspore as ms
 
+
 def compare_version(v1, v2="1.9.0"):
     """
     :param v1: version, format like 1.8.1
@@ -22,6 +23,7 @@ def compare_version(v1, v2="1.9.0"):
         return -1
     else:
         return 1
+
 
 if compare_version(ms.__version__) < 0:
     from mindspore import context, ops
