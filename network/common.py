@@ -130,6 +130,7 @@ class Detect(nn.Cell):
 
                 out[..., 0:2] = (ops.Sigmoid()(out[..., 0:2]) + grid_tensor) * self.stride[i]  # xy
                 out[..., 2:4] = ops.Exp()(out[..., 2:4]) * self.anchor_grid[i]  # wh
+                out[..., 4:] = ops.Sigmoid()(out[..., 4:])
                 z += (out.view(bs, -1, self.no),)
 
         # return outs
